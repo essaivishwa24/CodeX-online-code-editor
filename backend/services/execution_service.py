@@ -581,6 +581,7 @@ class ExecutionService:
 
             stdout = self._decode_and_clean_output(stdout_bytes, work_dir)
             stderr = self._decode_and_clean_output(stderr_bytes, work_dir)
+            stderr = self._friendly_stdin_error(stderr, language, stdin)
             elapsed = time.perf_counter() - started_at
             if exit_code == 0:
                 return ExecutionResult(True, "success", stdout, stderr, 0, elapsed)
@@ -801,3 +802,17 @@ class ExecutionService:
         output = output.replace(work_dir_text, "<sandbox>")
         output = output.replace(work_dir_text.replace("\\", "/"), "<sandbox>")
         return output.rstrip("\r\n")
+
+    @staticmethod
+    def _friendly_stdin_error(
+        stderr: str,
+        language: SupportedLanguage,
+        stdin: str,
+    ) -> str:
+        if stdin or not stderr:
+            return stderr
+        if language is SupportedLanguage.PYTHON and "EOFError: EOF when reading a line" in stderr:
+            return "Program input is required. Enter input in the Program Input panel and run again."
+        if language is SupportedLanguage.JAVA and "NoSuchElementException" in stderr:
+            return "Program input is required. Enter input in the Program Input panel and run again."
+        return stderr

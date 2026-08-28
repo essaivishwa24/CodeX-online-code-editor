@@ -167,6 +167,20 @@ async def test_typescript_compiles_and_runs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_typescript_stdin() -> None:
+    compiler = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / "typescript" / "bin" / "tsc"
+    if shutil.which("node") is None or not compiler.exists():
+        pytest.skip("Project-local TypeScript tooling is not installed")
+    result = await ExecutionService().execute(
+        SupportedLanguage.TYPESCRIPT,
+        'const nodeProcess = (globalThis as any).process;\nnodeProcess.stdin.on("data", (data: any) => console.log("Hello " + data.toString().trim()));',
+        "CodeX\n",
+    )
+    assert result.success is True
+    assert result.stdout == "Hello CodeX"
+
+
+@pytest.mark.asyncio
 async def test_typescript_compilation_error_is_separate() -> None:
     compiler = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / "typescript" / "bin" / "tsc"
     if shutil.which("node") is None or not compiler.exists():
