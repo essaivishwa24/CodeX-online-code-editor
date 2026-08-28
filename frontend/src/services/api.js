@@ -13,15 +13,23 @@ if (typeof console !== "undefined") {
 const TOKEN_KEY = "codex_access_token";
 const LEGACY_TOKEN_KEYS = ["codex:token"];
 
+function authStorage() {
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    return window.sessionStorage;
+  }
+  return localStorage;
+}
+
 export function getToken() {
-  const currentToken = localStorage.getItem(TOKEN_KEY);
+  const storage = authStorage();
+  const currentToken = storage.getItem(TOKEN_KEY);
   if (currentToken) return currentToken;
 
   for (const legacyKey of LEGACY_TOKEN_KEYS) {
-    const legacyToken = localStorage.getItem(legacyKey);
+    const legacyToken = storage.getItem(legacyKey);
     if (legacyToken) {
-      localStorage.setItem(TOKEN_KEY, legacyToken);
-      localStorage.removeItem(legacyKey);
+      storage.setItem(TOKEN_KEY, legacyToken);
+      storage.removeItem(legacyKey);
       return legacyToken;
     }
   }
@@ -29,9 +37,10 @@ export function getToken() {
 }
 
 export function setToken(token) {
-  for (const legacyKey of LEGACY_TOKEN_KEYS) localStorage.removeItem(legacyKey);
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  const storage = authStorage();
+  for (const legacyKey of LEGACY_TOKEN_KEYS) storage.removeItem(legacyKey);
+  if (token) storage.setItem(TOKEN_KEY, token);
+  else storage.removeItem(TOKEN_KEY);
 }
 
 async function request(path, options = {}) {

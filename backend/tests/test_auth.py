@@ -119,3 +119,40 @@ def test_wrong_unknown_disabled_and_unauthorized_access():
     assert disabled.status_code == 403
     assert disabled.json()["detail"] == "This account is currently disabled"
     assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_two_authenticated_clients_keep_identity_and_projects_isolated():
+    client, _ = make_client()
+    user_a = client.post(
+        "/api/auth/register",
+        json={"username": "usera", "email": "usera@example.com", "password": "Test@12345"},
+    ).json()
+    user_b = client.post(
+        "/api/auth/register",
+        json={"username": "userb", "email": "userb@example.com", "password": "Test@12345"},
+    ).json()
+    headers_a = {"Authorization": f"Bearer {user_a['access_token']}"}
+    headers_b = {"Authorization": f"Bearer {user_b['access_token']}"}
+
+    assert client.get("/api/auth/me", headers=headers_a).json()["email"] == "usera@example.com"
+    assert client.get("/api/auth/me", headers=headers_b).json()["email"] == "userb@example.com"
+
+    project_a = client.post(
+        "/api/projects",
+        headers=headers_a,
+        json={"name": "A project", "primary_language": "python"},
+    ).json()
+    project_b = client.post(
+        "/api/projects",
+        headers=headers_b,
+        json={"name": "B project", "primary_language": "python"},
+    ).json()
+
+    assert [item["name"] for item in client.get("/api/projects", headers=headers_a).json()] == ["A project"]
+    assert [item["name"] for item in client.get("/api/projects", headers=headers_b).json()] == ["B project"]
+    assert client.get(f"/api/projects/{project_a['id']}", headers=headers_b).status_code == 404
+    assert client.get(f"/api/projects/{project_b['id']}", headers=headers_a).status_code == 404
+
+    assert client.post("/api/auth/logout", headers=headers_b).status_code == 200
+    assert client.get("/api/auth/me", headers=headers_a).json()["email"] == "usera@example.com"
+    assert client.get("/api/projects", headers=headers_a).status_code == 200
