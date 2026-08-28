@@ -72,10 +72,10 @@ test("structured execution responses and stdin are preserved", async (context) =
   const result = await executeCode({
     language: "python",
     code: "name=input(); print('Hello', name)",
-    stdin: "CodeX",
+    stdin: "10\n20\n",
   });
 
-  assert.equal(requestBody.stdin, "CodeX");
+  assert.equal(requestBody.stdin, "10\n20\n");
   assert.equal(result.stdout, "Hello CodeX");
   assert.equal(result.exitCode, 0);
   assert.equal(result.executionTimeMs, 125);

@@ -141,6 +141,30 @@ async def test_python_stdin_and_structured_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_python_multiple_stdin_values() -> None:
+    result = await ExecutionService().execute(
+        SupportedLanguage.PYTHON,
+        'a = int(input("Enter first number: "))\nb = int(input("Enter second number: "))\nprint("Sum =", a + b)',
+        "10\n20\n",
+    )
+
+    assert result.success is True
+    assert result.stdout == "Enter first number: Enter second number: Sum = 30"
+
+
+@pytest.mark.asyncio
+async def test_python_empty_stdin_has_helpful_input_message() -> None:
+    result = await ExecutionService().execute(
+        SupportedLanguage.PYTHON,
+        "value = input()\nprint(value)",
+    )
+
+    assert result.success is False
+    assert result.status == "runtime_error"
+    assert result.stderr == "Program input is required. Enter input in the Program Input panel and run again."
+
+
+@pytest.mark.asyncio
 async def test_javascript_stdin() -> None:
     if shutil.which("node") is None:
         pytest.skip("Node.js is not installed")
@@ -151,6 +175,19 @@ async def test_javascript_stdin() -> None:
     )
     assert result.success is True
     assert result.stdout == "Hello CodeX"
+
+
+@pytest.mark.asyncio
+async def test_javascript_multiple_stdin_values() -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed")
+    result = await ExecutionService().execute(
+        SupportedLanguage.JAVASCRIPT,
+        "let values = []; process.stdin.on('data', data => values.push(...data.toString().trim().split(/\\s+/).map(Number))); process.stdin.on('end', () => console.log('Sum =', values[0] + values[1]));",
+        "10\n20\n",
+    )
+    assert result.success is True
+    assert result.stdout == "Sum = 30"
 
 
 @pytest.mark.asyncio
@@ -231,7 +268,7 @@ async def test_c_compiles_runs_and_accepts_stdin_when_gcc_is_available() -> None
     result = await ExecutionService().execute(
         SupportedLanguage.C,
         '#include <stdio.h>\nint main(void) { int a, b; scanf("%d %d", &a, &b); printf("%d\\n", a + b); }',
-        "10 20\n",
+        "10\n20\n",
     )
 
     assert result.success is True
@@ -277,14 +314,16 @@ async def test_java_compiles_runs_and_accepts_stdin_when_jdk_is_available() -> N
 public class Main {
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
-        System.out.println("Hello " + scanner.nextLine());
+        int a = scanner.nextInt();
+        int b = scanner.nextInt();
+        System.out.println("Sum = " + (a + b));
     }
 }""",
-        "CodeX\n",
+        "10\n20\n",
     )
 
     assert result.success is True
-    assert result.stdout == "Hello CodeX"
+    assert result.stdout == "Sum = 30"
 
 
 @pytest.mark.asyncio
@@ -526,7 +565,7 @@ async def test_cpp_compiles_runs_and_accepts_stdin_when_gpp_is_available() -> No
     result = await ExecutionService().execute(
         SupportedLanguage.CPP,
         "#include <iostream>\nint main() { int a, b; std::cin >> a >> b; std::cout << a + b; return 0; }",
-        "10 20\n",
+        "10\n20\n",
     )
 
     assert result.success is True

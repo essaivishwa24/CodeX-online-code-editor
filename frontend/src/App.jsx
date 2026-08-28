@@ -43,6 +43,18 @@ function sqlWorkspaceId(projectId, fileId) {
   return workspaceId;
 }
 
+function mayRequireInput(language, source) {
+  const patterns = {
+    python: /\binput\s*\(/,
+    java: /\b(?:Scanner|BufferedReader)\b/,
+    c: /\b(?:scanf|fgets)\s*\(/,
+    cpp: /\b(?:cin|getline)\b/,
+    javascript: /\bprocess\.stdin\b/,
+    typescript: /\bprocess\.stdin\b/,
+  };
+  return Boolean(patterns[language]?.test(source || ""));
+}
+
 function formatRunResult(result, language) {
   const label = LANGUAGES[language]?.label || language;
   const status = result.status === "compilation_error" ? "Compilation failed"
@@ -206,6 +218,7 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [restoreError, setRestoreError] = useState("");
+  const inputMayBeRequired = Boolean(file && file.language !== "sql" && mayRequireInput(file.language, code));
 
   const refreshRuntimeStatus = useCallback(async () => {
     try {
@@ -558,6 +571,7 @@ export default function App() {
                 {file?.language !== "sql" && <label className="border-b border-[var(--border)] p-3 text-xs font-semibold text-[var(--text-muted)]">
                   Program Input
                   <textarea aria-label="Program Input" className="stdin-input mt-2 block h-16 w-full resize-y font-mono text-xs" onChange={(event) => setStdin(event.target.value)} placeholder="Optional input, one value per line" value={stdin} />
+                  {inputMayBeRequired && !stdin.trim() && <p className="mt-2 text-[11px] font-normal text-[var(--warning)]">This program may require input. Enter each value on a new line above.</p>}
                 </label>}
                 {file?.language === "sql" && sqlResult
                   ? <SQLResultTable result={sqlResult} />
