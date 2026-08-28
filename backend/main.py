@@ -89,7 +89,14 @@ def create_app():
     ]
     configured_origins = [x.strip().rstrip("/") for x in os.environ.get("CODEX_CORS_ORIGINS", "").split(",") if x.strip()]
     origins = list(dict.fromkeys(required_origins + configured_origins))
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_origin_regex=r"^https://code-x-online-code-editor-[a-zA-Z0-9-]+-essai-vishwa\.vercel\.app$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health_router,prefix="/api"); app.include_router(code_runner_router,prefix="/api")
     @app.post("/api/auth/register")
     def register(data:Register, db:Session=Depends(get_db)):
