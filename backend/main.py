@@ -85,11 +85,7 @@ def create_app():
     required_origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
         "https://code-x-online-code-editor.vercel.app",
-        "https://code-x-online-code-editor-git-main-essai-vishwa.vercel.app",
-        "https://code-x-online-code-editor-e4wpkw653-essai-vishwa.vercel.app",
     ]
     configured_origins = [x.strip().rstrip("/") for x in os.environ.get("CODEX_CORS_ORIGINS", "").split(",") if x.strip()]
     origins = list(dict.fromkeys(required_origins + configured_origins))

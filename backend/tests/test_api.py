@@ -206,6 +206,21 @@ def test_cors_allows_local_vite_frontend() -> None:
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_cors_allows_vercel_production_preflight() -> None:
+    response = client.options(
+        "/api/auth/register",
+        headers={
+            "Origin": "https://code-x-online-code-editor.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://code-x-online-code-editor.vercel.app"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_cors_origins_can_be_configured(monkeypatch) -> None:
     monkeypatch.setenv(
         "CODEX_CORS_ORIGINS",
