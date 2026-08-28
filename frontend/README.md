@@ -1,6 +1,6 @@
 # CodeX frontend
 
-React + Vite frontend for the CodeX online code editor. It supports Python, JavaScript, and sandboxed HTML/CSS previews with a responsive developer-tool interface.
+React + Vite frontend for the CodeX online code editor. It supports Monaco editing for Python, JavaScript, TypeScript, Java, C, C++, SQL, HTML, and CSS plus sandboxed web-project previews. SQL queries render structured result tables and can reset their isolated per-project playground after confirmation.
 
 ## Run locally
 
@@ -38,4 +38,4 @@ The production assets are written to `dist/`. Configure `VITE_API_BASE_URL` at b
 
 ## Browser-side safety
 
-HTML/CSS preview code is placed in an iframe with a restrictive `sandbox`, no `allow-scripts` or `allow-same-origin` capability, no referrer, and an injected Content Security Policy. Python and JavaScript are never evaluated by the browser; they are sent to the backend execution service.
+HTML/CSS preview code is placed in an iframe with a restrictive sandbox, no same-origin capability, no referrer, and an injected Content Security Policy. Project JavaScript is enabled only in the sandboxed preview; executable snippet languages are sent to the backend execution service.

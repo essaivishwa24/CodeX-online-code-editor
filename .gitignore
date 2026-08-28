@@ -22,6 +22,8 @@ backend/htmlcov/
 .vscode/
 *.swp
 *.swo
+*.db
+backend/data/sql_playgrounds/
 
 # Operating-system files
 .DS_Store

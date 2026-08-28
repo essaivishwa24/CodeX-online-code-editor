@@ -3,6 +3,7 @@ import Editor from "@monaco-editor/react";
 import ActionButton from "./ActionButton";
 import Icon from "./Icon";
 import StatusBar from "./StatusBar";
+import { defineCodeXEditorThemes } from "../theme/monacoThemes";
 
 function EditorLoading() {
   return (
@@ -13,48 +14,6 @@ function EditorLoading() {
       </div>
     </div>
   );
-}
-
-function defineThemes(monaco) {
-  monaco.editor.defineTheme("codex-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: [],
-    colors: {
-      "editor.background": "#101218",
-      "editor.foreground": "#d6d9e2",
-      "editorLineNumber.foreground": "#565b69",
-      "editorLineNumber.activeForeground": "#a7afc2",
-      "editor.selectionBackground": "#4f64cb55",
-      "editor.inactiveSelectionBackground": "#4f64cb2e",
-      "editor.lineHighlightBackground": "#171a22",
-      "editorCursor.foreground": "#91a1ff",
-      "editorIndentGuide.background1": "#242833",
-      "editorIndentGuide.activeBackground1": "#42495b",
-      "editorWidget.background": "#181b23",
-      "editorSuggestWidget.background": "#181b23",
-      "editorSuggestWidget.border": "#2b303c",
-      "editorHoverWidget.background": "#181b23",
-      "editorHoverWidget.border": "#2b303c",
-    },
-  });
-
-  monaco.editor.defineTheme("codex-light", {
-    base: "vs",
-    inherit: true,
-    rules: [],
-    colors: {
-      "editor.background": "#ffffff",
-      "editor.foreground": "#202431",
-      "editorLineNumber.foreground": "#a4a9b5",
-      "editorLineNumber.activeForeground": "#555c6d",
-      "editor.selectionBackground": "#7487f733",
-      "editor.lineHighlightBackground": "#f7f8fc",
-      "editorCursor.foreground": "#5365d5",
-      "editorIndentGuide.background1": "#e6e8ef",
-      "editorIndentGuide.activeBackground1": "#c5cad8",
-    },
-  });
 }
 
 export default function CodeEditor({
@@ -111,7 +70,7 @@ export default function CodeEditor({
 
       <div className="min-h-0 flex-1 bg-[var(--editor-bg)]">
         <Editor
-          beforeMount={defineThemes}
+          beforeMount={defineCodeXEditorThemes}
           height="100%"
           language={language}
           loading={<EditorLoading />}

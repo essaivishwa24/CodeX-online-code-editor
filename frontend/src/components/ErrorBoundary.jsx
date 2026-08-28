@@ -17,14 +17,14 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <main className="grid min-h-screen place-items-center bg-[#0b0d12] p-6 text-slate-100">
-          <div className="max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-7 text-center shadow-2xl">
-            <p className="text-lg font-semibold">CodeX could not load the editor</p>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
+        <main className="auth-page">
+          <div className="panel auth-card max-w-md p-7 text-center">
+            <p className="text-lg font-semibold text-[var(--text-strong)]">CodeX could not load the editor</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
               Your saved code is still in this browser. Reload the page to try again.
             </p>
             <button
-              className="mt-5 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400"
+              className="primary-button mt-5"
               onClick={() => window.location.reload()}
               type="button"
             >

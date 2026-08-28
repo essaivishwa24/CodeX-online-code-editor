@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from backend.main import app, create_app
+from backend.routes import code_runner
+from backend.services.execution_service import ExecutionService
 
 client = TestClient(app)
 
@@ -19,7 +22,50 @@ def test_run_python_code() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"success": True, "output": "Hello World"}
+    body = response.json()
+    assert body["success"] is True
+    assert body["status"] == "success"
+    assert body["stdout"] == body["output"] == "Hello World"
+    assert body["stderr"] == ""
+    assert body["exit_code"] == 0
+    assert body["execution_time"] >= 0
+
+
+def test_run_javascript_code() -> None:
+    response = client.post(
+        "/api/run",
+        json={"language": "javascript", "code": 'console.log("JavaScript works");'},
+    )
+    assert response.status_code == 200
+    assert response.json()["stdout"] == "JavaScript works"
+
+
+@pytest.mark.parametrize("alias", ["c++", "cplusplus"])
+def test_cpp_language_aliases_are_normalized(monkeypatch, tmp_path, alias) -> None:
+    monkeypatch.setattr(
+        code_runner,
+        "execution_service",
+        ExecutionService(temp_root=tmp_path, cpp_compiler="missing/g++"),
+    )
+    response = client.post(
+        "/api/run",
+        json={"language": alias, "code": "int main() { return 0; }"},
+    )
+
+    assert response.status_code == 503
+    assert "g++" in response.json()["stderr"]
+
+
+def test_run_typescript_code() -> None:
+    response = client.post(
+        "/api/run",
+        json={
+            "language": "typescript",
+            "code": 'const language: string = "TypeScript";\nconsole.log(language + " works");',
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["stdout"] == "TypeScript works"
 
 
 def test_runtime_error_is_returned_without_crashing_api() -> None:
@@ -35,13 +81,96 @@ def test_runtime_error_is_returned_without_crashing_api() -> None:
     assert "codex-run-" not in body["error"]
 
 
-def test_html_is_rejected_by_backend() -> None:
+def test_sql_run_returns_columns_rows_and_count(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        code_runner,
+        "execution_service",
+        ExecutionService(sql_storage_root=tmp_path),
+    )
     response = client.post(
         "/api/run",
-        json={"language": "html", "code": "<h1>Preview me</h1>"},
+        json={
+            "language": "sql",
+            "workspace_id": "api-workspace",
+            "code": "CREATE TABLE items (id INTEGER, name TEXT); "
+                    "INSERT INTO items VALUES (1, 'one'); "
+                    "SELECT * FROM items;",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["columns"] == ["id", "name"]
+    assert body["rows"] == [[1, "one"]]
+    assert body["row_count"] == 1
+
+
+def test_sql_reset_clears_only_the_playground(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        code_runner,
+        "execution_service",
+        ExecutionService(sql_storage_root=tmp_path),
+    )
+    client.post(
+        "/api/run",
+        json={
+            "language": "sql",
+            "workspace_id": "api-workspace",
+            "code": "CREATE TABLE disposable (id INTEGER);",
+        },
+    )
+    reset = client.post(
+        "/api/sql/reset",
+        json={"workspace_id": "api-workspace"},
+    )
+    query = client.post(
+        "/api/run",
+        json={
+            "language": "sql",
+            "workspace_id": "api-workspace",
+            "code": "SELECT * FROM disposable;",
+        },
+    )
+
+    assert reset.status_code == 200
+    assert reset.json()["success"] is True
+    assert query.json()["status"] == "sql_error"
+
+
+def test_runtime_status_endpoint() -> None:
+    response = client.get("/api/runtime-status")
+
+    assert response.status_code == 200
+    assert response.json()["runtimes"]["python"]["available"] is True
+    assert response.json()["runtimes"]["sql"]["available"] is True
+
+
+@pytest.mark.parametrize(("language", "code"), [("html", "<h1>Preview me</h1>"), ("css", "body {}")])
+def test_browser_languages_are_rejected_by_backend(language: str, code: str) -> None:
+    response = client.post(
+        "/api/run",
+        json={"language": language, "code": code},
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("language", "service_kwargs", "tool"),
+    [
+        ("java", {"java_compiler": "missing/javac"}, "javac"),
+        ("c", {"c_compiler": "missing/gcc"}, "gcc"),
+        ("cpp", {"cpp_compiler": "missing/g++"}, "g++"),
+    ],
+)
+def test_missing_compiler_api_response(monkeypatch, language, service_kwargs, tool) -> None:
+    monkeypatch.setattr(code_runner, "execution_service", ExecutionService(**service_kwargs))
+    response = client.post("/api/run", json={"language": language, "code": "placeholder"})
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "unavailable"
+    assert tool in response.json()["stderr"]
 
 
 def test_blank_code_is_rejected() -> None:

@@ -1,5 +1,74 @@
 const configuredBaseUrl = (import.meta.env?.VITE_API_BASE_URL || "").trim();
 export const API_BASE_URL = configuredBaseUrl.replace(/\/$/, "");
+const TOKEN_KEY = "codex_access_token";
+const LEGACY_TOKEN_KEYS = ["codex:token"];
+
+export function getToken() {
+  const currentToken = localStorage.getItem(TOKEN_KEY);
+  if (currentToken) return currentToken;
+
+  for (const legacyKey of LEGACY_TOKEN_KEYS) {
+    const legacyToken = localStorage.getItem(legacyKey);
+    if (legacyToken) {
+      localStorage.setItem(TOKEN_KEY, legacyToken);
+      localStorage.removeItem(legacyKey);
+      return legacyToken;
+    }
+  }
+  return null;
+}
+
+export function setToken(token) {
+  for (const legacyKey of LEGACY_TOKEN_KEYS) localStorage.removeItem(legacyKey);
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+async function request(path, options = {}) {
+  const token = getToken();
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError(
+        readableDetail(body.detail || body.error),
+        response.status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR",
+        response.status,
+      );
+    }
+    return body;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(
+      "Unable to connect to the CodeX server.",
+      "NETWORK_ERROR",
+    );
+  }
+}
+export const register = (data) => request("/api/auth/register", { method: "POST", body: JSON.stringify(data) });
+export const login = (data) => request("/api/auth/login", { method: "POST", body: JSON.stringify(data) });
+export const getCurrentUser = () => request("/api/auth/me");
+export const logout = () => request("/api/auth/logout", { method: "POST" });
+export const listProjects = () => request("/api/projects");
+export const createProject = (data) => request("/api/projects", { method: "POST", body: JSON.stringify(data) });
+export const getProject = (id) => request(`/api/projects/${id}`);
+export const updateProject = (id, data) => request(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+export const deleteProject = (id) => request(`/api/projects/${id}`, { method: "DELETE" });
+export const saveFile = (projectId, fileId, data) => request(`/api/projects/${projectId}/files/${fileId}`, { method: "PATCH", body: JSON.stringify(data) });
+export const createFile = (projectId, data) => request(`/api/projects/${projectId}/files`, { method: "POST", body: JSON.stringify(data) });
+export const getRuntimeStatus = () => request("/api/runtime-status");
+export const resetSqlPlayground = (workspaceId) => request("/api/sql/reset", {
+  method: "POST",
+  body: JSON.stringify({ workspace_id: workspaceId }),
+});
 
 const parsedTimeout = Number(import.meta.env?.VITE_API_TIMEOUT_MS);
 const REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 20_000;
@@ -46,13 +115,27 @@ function normalizeResult(payload) {
 
   return {
     success,
-    output: typeof payload?.output === "string" ? payload.output : "",
-    error: success ? "" : readableDetail(payload?.error || payload?.detail),
-    executionTimeMs: duration !== null && Number.isFinite(duration) ? duration : null,
+    status: payload?.status || (success ? "success" : "runtime_error"),
+    stdout: typeof payload?.stdout === "string" ? payload.stdout : (typeof payload?.output === "string" ? payload.output : ""),
+    stderr: typeof payload?.stderr === "string" ? payload.stderr : (success ? "" : readableDetail(payload?.error || payload?.detail)),
+    output: typeof payload?.stdout === "string" ? payload.stdout : (typeof payload?.output === "string" ? payload.output : ""),
+    error: success ? "" : (typeof payload?.stderr === "string" ? payload.stderr : readableDetail(payload?.error || payload?.detail)),
+    exitCode: Number.isInteger(payload?.exit_code) ? payload.exit_code : null,
+    memoryUsage: Number.isFinite(payload?.memory_usage) ? payload.memory_usage : null,
+    columns: Array.isArray(payload?.columns) ? payload.columns.map(String) : null,
+    rows: Array.isArray(payload?.rows) ? payload.rows : null,
+    rowCount: Number.isInteger(payload?.row_count) ? payload.row_count : null,
+    message: typeof payload?.message === "string" ? payload.message : null,
+    executionTimeMs: duration !== null && Number.isFinite(duration)
+      ? (payload?.execution_time_ms != null || payload?.duration_ms != null ? duration : duration * 1000)
+      : null,
   };
 }
 
-export async function executeCode({ language, code }, { signal } = {}) {
+export async function executeCode({ language, code, stdin = "", workspaceId = "default" }, { signal } = {}) {
+  const executionLanguage = typeof language === "string" && language.trim().toLowerCase() === "sql"
+    ? "sql"
+    : language;
   const requestController = new AbortController();
   let didTimeout = false;
   const timeoutId = window.setTimeout(() => {
@@ -70,7 +153,7 @@ export async function executeCode({ language, code }, { signal } = {}) {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ language, code }),
+      body: JSON.stringify({ language: executionLanguage, code, stdin, workspace_id: workspaceId }),
       signal: requestController.signal,
     });
 

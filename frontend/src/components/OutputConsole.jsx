@@ -58,10 +58,10 @@ export default function OutputConsole({ runState, onCopy, onClear }) {
 
       <div className="terminal-body">
         <div className="terminal-chrome" aria-hidden="true">
-          <span className="bg-[#ff6b66]" />
-          <span className="bg-[#e9b84d]" />
-          <span className="bg-[#49bf75]" />
-          <span className="ml-2 text-[10px] font-medium uppercase tracking-[0.14em] text-[#676d7b]">
+          <span className="terminal-dot terminal-dot-error" />
+          <span className="terminal-dot terminal-dot-warning" />
+          <span className="terminal-dot terminal-dot-success" />
+          <span className="terminal-session-label">
             codex — session
           </span>
         </div>

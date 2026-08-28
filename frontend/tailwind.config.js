@@ -6,9 +6,9 @@ export default {
     extend: {
       colors: {
         brand: {
-          400: "#8b9dfd",
-          500: "#7487f7",
-          600: "#6071e8",
+          400: "#388bfd",
+          500: "#2f81f7",
+          600: "#0969da",
         },
       },
       fontFamily: {
@@ -16,8 +16,8 @@ export default {
         mono: ["JetBrains Mono", "Cascadia Code", "SFMono-Regular", "Consolas", "monospace"],
       },
       boxShadow: {
-        panel: "0 18px 55px rgba(15, 23, 42, 0.08)",
-        "panel-dark": "0 18px 55px rgba(0, 0, 0, 0.24)",
+        panel: "0 8px 24px rgba(140, 149, 159, 0.15)",
+        "panel-dark": "0 8px 24px rgba(1, 4, 9, 0.22)",
       },
     },
   },

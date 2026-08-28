@@ -1,333 +1,512 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CodeEditor from "./components/CodeEditor";
-import Header from "./components/Header";
-import OutputConsole from "./components/OutputConsole";
+import { useCallback, useEffect, useState } from "react";
+import Editor from "@monaco-editor/react";
 import PreviewPanel from "./components/PreviewPanel";
-import Toast from "./components/Toast";
-import Workspace from "./components/Workspace";
+import SQLResultTable from "./components/SQLResultTable";
+import { filenameForLanguage, languageForFilename, LANGUAGES, LANGUAGE_OPTIONS, languageOptionLabel, STORAGE_KEYS } from "./constants/languages";
 import {
-  DEFAULT_LANGUAGE,
-  LANGUAGES,
-  LANGUAGE_OPTIONS,
-  STORAGE_KEYS,
-  isSupportedLanguage,
-} from "./constants/languages";
-import { ApiError, executeCode } from "./services/api";
-import { copyText, createSandboxedDocument, downloadText } from "./utils/browser";
-import { readStorage, writeStorage } from "./utils/storage";
+  ApiError,
+  createFile,
+  createProject,
+  deleteProject,
+  executeCode,
+  getCurrentUser,
+  getProject,
+  getRuntimeStatus,
+  getToken,
+  listProjects,
+  login,
+  logout,
+  register,
+  resetSqlPlayground,
+  saveFile,
+  setToken,
+  updateProject,
+} from "./services/api";
+import { createProjectPreview } from "./utils/browser";
 
-const EMPTY_RUN_STATE = {
-  status: "idle",
-  output: "",
-  error: "",
-  executionTimeMs: null,
+const OUTPUT_STATUS_LABELS = {
+  idle: "Ready",
+  running: "Running",
+  success: "Success",
+  error: "Error",
 };
 
-function initialLanguage() {
-  const saved = readStorage(STORAGE_KEYS.language, DEFAULT_LANGUAGE);
-  return isSupportedLanguage(saved) ? saved : DEFAULT_LANGUAGE;
+function sqlWorkspaceId(projectId) {
+  if (!projectId) return "default";
+  const storageKey = STORAGE_KEYS.sqlWorkspace(projectId);
+  let workspaceId = localStorage.getItem(storageKey);
+  if (!workspaceId) {
+    workspaceId = globalThis.crypto?.randomUUID?.()
+      || `project-${projectId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(storageKey, workspaceId);
+  }
+  return workspaceId;
 }
 
-function initialDrafts() {
-  return Object.fromEntries(
-    LANGUAGE_OPTIONS.map((item) => {
-      const stored = readStorage(STORAGE_KEYS.code(item.id), null);
-      return [item.id, stored === null ? item.starter : stored];
-    }),
+function formatRunResult(result, language) {
+  const label = LANGUAGES[language]?.label || language;
+  const status = result.status === "compilation_error" ? "Compilation Error"
+    : result.status === "runtime_error" ? "Runtime Error"
+      : result.status === "timeout" ? "Timed Out"
+        : result.success ? "Success" : "Error";
+  const elapsed = result.executionTimeMs == null ? "Not available" : `${(result.executionTimeMs / 1000).toFixed(3)}s`;
+  return `Language: ${label}\nStatus: ${status}\nExecution Time: ${elapsed}\nExit Code: ${result.exitCode ?? "Not available"}\nMemory: ${result.memoryUsage ?? "Not available"}\n\nSTDOUT\n${result.stdout || "<empty>"}\n\nSTDERR\n${result.stderr || "<empty>"}`;
+}
+
+function friendlyAuthError(error) {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "Invalid email or password.";
+    if (error.status === 403) return "This account is currently disabled.";
+    if (error.code === "NETWORK_ERROR") return "Unable to connect to the CodeX server.";
+    if (error.status >= 500) return "Unable to sign in right now. Please try again.";
+  }
+  return error?.message || "Unable to sign in right now. Please try again.";
+}
+
+function Auth({ initialMessage = "", onAuthenticated }) {
+  const [signup, setSignup] = useState(false);
+  const [form, setForm] = useState({ username: "", email: "", password: "", confirm_password: "" });
+  const [error, setError] = useState(initialMessage);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    if (error) setError("");
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (isSubmitting) return;
+    setError("");
+    setIsSubmitting(true);
+    try {
+      const credentials = signup
+        ? { ...form, email: form.email.trim().toLowerCase() }
+        : { email: form.email.trim().toLowerCase(), password: form.password };
+      const result = signup ? await register(credentials) : await login(credentials);
+      await onAuthenticated(result);
+    } catch (requestError) {
+      setError(friendlyAuthError(requestError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="auth-page">
+      <form className="panel auth-card w-full max-w-md space-y-4 p-8" onSubmit={submit}>
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="brand-mark">⌘</div>
+          <div className="auth-brand-copy min-w-0">
+            <h1 className="text-2xl font-bold text-[var(--text-strong)]">CodeX</h1>
+            <p className="auth-tagline break-words text-sm leading-5 text-[var(--text-muted)]">Your focused online coding workspace</p>
+          </div>
+        </div>
+        <h2 className="text-lg font-semibold text-[var(--text-strong)]">
+          {signup ? "Create your account" : "Welcome back"}
+        </h2>
+        {signup && (
+          <input
+            autoComplete="username"
+            className="form-input w-full"
+            disabled={isSubmitting}
+            maxLength={40}
+            minLength={3}
+            onChange={(event) => updateField("username", event.target.value)}
+            pattern="[A-Za-z0-9_-]+"
+            placeholder="Username"
+            required
+            value={form.username}
+          />
+        )}
+        <input
+          autoComplete="email"
+          className="form-input w-full"
+          disabled={isSubmitting}
+          onChange={(event) => updateField("email", event.target.value)}
+          placeholder="Email"
+          required
+          type="email"
+          value={form.email}
+        />
+        <input
+          autoComplete={signup ? "new-password" : "current-password"}
+          className="form-input w-full"
+          disabled={isSubmitting}
+          minLength={8}
+          onChange={(event) => updateField("password", event.target.value)}
+          placeholder="Password (8+ characters)"
+          required
+          type="password"
+          value={form.password}
+        />
+        {signup && (
+          <input
+            autoComplete="new-password"
+            className="form-input w-full"
+            disabled={isSubmitting}
+            minLength={8}
+            onChange={(event) => updateField("confirm_password", event.target.value)}
+            placeholder="Confirm password"
+            required
+            type="password"
+            value={form.confirm_password}
+          />
+        )}
+        {error && <p className="text-sm text-[var(--error)]" role="alert">{error}</p>}
+        <button className="primary-button w-full" disabled={isSubmitting} type="submit">
+          {isSubmitting ? (signup ? "Creating account…" : "Signing in…") : (signup ? "Sign up" : "Log in")}
+        </button>
+        <button
+          className="text-link"
+          disabled={isSubmitting}
+          onClick={() => { setSignup((current) => !current); setError(""); }}
+          type="button"
+        >
+          {signup ? "Already have an account? Log in" : "Need an account? Sign up"}
+        </button>
+      </form>
+    </div>
   );
-}
-
-function initialTheme() {
-  const saved = readStorage(STORAGE_KEYS.theme, "dark");
-  return saved === "light" ? "light" : "dark";
 }
 
 export default function App() {
-  const [language, setLanguage] = useState(initialLanguage);
-  const [drafts, setDrafts] = useState(initialDrafts);
-  const [theme, setTheme] = useState(initialTheme);
-  const [runState, setRunState] = useState(EMPTY_RUN_STATE);
+  const [user, setUser] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [project, setProject] = useState(null);
+  const [file, setFile] = useState(null);
+  const [code, setCode] = useState("");
+  const [output, setOutput] = useState("");
+  const [outputStatus, setOutputStatus] = useState("idle");
+  const [sqlResult, setSqlResult] = useState(null);
+  const [runtimeStatuses, setRuntimeStatuses] = useState({});
+  const [stdin, setStdin] = useState("");
   const [previewDocument, setPreviewDocument] = useState("");
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [previewAllowsScripts, setPreviewAllowsScripts] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem("codex:theme") || "dark");
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [restoreError, setRestoreError] = useState("");
 
-  const requestIdRef = useRef(0);
-  const requestControllerRef = useRef(null);
-  const runLockRef = useRef(false);
-
-  const selectedLanguage = LANGUAGES[language];
-  const code = drafts[language] ?? "";
-  const isRunning = runState.status === "running";
-
-  const showToast = useCallback((message, type = "success") => {
-    setToast({ id: Date.now(), message, type });
+  const refreshRuntimeStatus = useCallback(async () => {
+    try {
+      const result = await getRuntimeStatus();
+      setRuntimeStatuses(result.runtimes || {});
+    } catch {
+      // Runtime discovery is supplemental; execution still returns the full error.
+    }
   }, []);
-
-  useEffect(() => {
-    if (!toast) return undefined;
-    const timeoutId = window.setTimeout(() => setToast(null), 2600);
-    return () => window.clearTimeout(timeoutId);
-  }, [toast]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    document.documentElement.style.colorScheme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute(
-      "content",
-      theme === "dark" ? "#0b0d12" : "#f3f5f9",
-    );
-    writeStorage(STORAGE_KEYS.theme, theme);
+    localStorage.setItem("codex:theme", theme);
   }, [theme]);
 
   useEffect(() => {
-    writeStorage(STORAGE_KEYS.language, language);
-  }, [language]);
+    if (user) void refreshRuntimeStatus();
+  }, [refreshRuntimeStatus, user]);
 
-  useEffect(() => {
-    document.body.classList.toggle("editor-is-fullscreen", isFullscreen);
-    const handleEscape = (event) => {
-      if (event.key === "Escape" && isFullscreen) setIsFullscreen(false);
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => {
-      window.removeEventListener("keydown", handleEscape);
-      document.body.classList.remove("editor-is-fullscreen");
-    };
-  }, [isFullscreen]);
+  const restoreSession = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      setAuthChecked(true);
+      return;
+    }
 
-  const cancelActiveRun = useCallback(() => {
-    requestIdRef.current += 1;
-    requestControllerRef.current?.abort();
-    requestControllerRef.current = null;
-    runLockRef.current = false;
+    setAuthChecked(false);
+    setRestoreError("");
+    try {
+      const restoredUser = await getCurrentUser();
+      setUser(restoredUser);
+      setProjects(await listProjects());
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setToken(null);
+        setUser(null);
+        setAuthMessage("Your session has expired. Please sign in again.");
+      } else {
+        setRestoreError("Unable to connect to the CodeX server.");
+      }
+    } finally {
+      setAuthChecked(true);
+    }
   }, []);
 
-  const runCode = useCallback(async () => {
-    if (runLockRef.current) return;
+  useEffect(() => { void restoreSession(); }, [restoreSession]);
 
-    const submittedLanguage = language;
-    const submittedCode = drafts[submittedLanguage] ?? "";
-
-    if (!isSupportedLanguage(submittedLanguage)) {
-      setRunState({
-        ...EMPTY_RUN_STATE,
-        status: "error",
-        error: "This language is not supported by CodeX.",
-      });
-      return;
-    }
-
-    if (!submittedCode.trim()) {
-      setRunState({
-        ...EMPTY_RUN_STATE,
-        status: "error",
-        error: "The editor is empty. Add some code before running it.",
-      });
-      return;
-    }
-
-    runLockRef.current = true;
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    const startedAt = performance.now();
-    setRunState({ ...EMPTY_RUN_STATE, status: "running" });
-
+  const handleAuthenticated = async (result) => {
+    setToken(result.access_token);
     try {
-      if (submittedLanguage === "html") {
-        await new Promise((resolve) => window.requestAnimationFrame(resolve));
-        if (requestId !== requestIdRef.current) return;
+      const verifiedUser = await getCurrentUser();
+      const savedProjects = await listProjects();
+      setUser(verifiedUser);
+      setProjects(savedProjects);
+      setAuthMessage("");
+      setRestoreError("");
+    } catch (error) {
+      setToken(null);
+      throw error;
+    }
+  };
 
-        setPreviewDocument(createSandboxedDocument(submittedCode));
-        setRunState({
-          status: "success",
-          output: "Preview refreshed. Embedded scripts and form submissions are blocked for safety.",
-          error: "",
-          executionTimeMs: performance.now() - startedAt,
-        });
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      // Local logout must still complete if the server is unavailable.
+    } finally {
+      setToken(null);
+      setUser(null);
+      setProjects([]);
+      setProject(null);
+      setFile(null);
+      setCode("");
+      setOutput("");
+      setOutputStatus("idle");
+      setSqlResult(null);
+      setRuntimeStatuses({});
+      setStdin("");
+      setPreviewDocument("");
+      setAuthMessage("");
+    }
+  };
+
+  if (!authChecked) {
+    return <div className="grid min-h-screen place-items-center">Loading CodeX…</div>;
+  }
+
+  if (restoreError && getToken() && !user) {
+    return (
+      <div className="auth-page">
+        <div className="panel auth-card max-w-md space-y-4 p-8 text-center">
+          <h1 className="text-xl font-semibold text-[var(--text-strong)]">CodeX is unavailable</h1>
+          <p className="text-sm text-[var(--text-muted)]">{restoreError}</p>
+          <button className="primary-button w-full" onClick={() => void restoreSession()} type="button">Try again</button>
+          <button className="header-button w-full" onClick={() => void handleLogout()} type="button">Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <Auth initialMessage={authMessage} onAuthenticated={handleAuthenticated} />;
+
+  const open = async (selectedProject) => {
+    const fullProject = await getProject(selectedProject.id);
+    const normalizedProject = {
+      ...fullProject,
+      files: fullProject.files.map((projectFile) => ({
+        ...projectFile,
+        language: languageForFilename(projectFile.filename, projectFile.language),
+      })),
+    };
+    setProject(normalizedProject);
+    setFile(normalizedProject.files[0]);
+    setCode(normalizedProject.files[0]?.content || "");
+    setOutput("");
+    setOutputStatus("idle");
+    setSqlResult(null);
+    setPreviewDocument("");
+  };
+
+  const save = async () => {
+    if (!project || !file) return;
+    setSaving(true);
+    try {
+      await saveFile(project.id, file.id, {
+        content: code,
+        filename: file.filename,
+        language: file.language,
+      });
+      setFile({ ...file, content: code });
+      setProject((current) => ({
+        ...current,
+        files: current.files.map((projectFile) => projectFile.id === file.id
+          ? { ...file, content: code }
+          : projectFile),
+      }));
+      setProjects(await listProjects());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const create = async () => {
+    const created = await createProject({
+      name: `untitled-${projects.length + 1}`,
+      primary_language: "python",
+      template: "basic",
+    });
+    setProjects([created, ...projects]);
+    await open(created);
+  };
+
+  const run = async () => {
+    setOutput("Running…");
+    setOutputStatus("running");
+    setSqlResult(null);
+    const previewFiles = project.files.map((projectFile) => projectFile.id === file.id
+      ? { ...projectFile, ...file, content: code }
+      : projectFile);
+    if (file.language === "html" || file.language === "css") {
+      const preview = createProjectPreview(previewFiles);
+      if (!preview) {
+        setPreviewDocument("");
+        setPreviewAllowsScripts(false);
+        setOutput("CSS is a styling language. Add or open an HTML file to preview it.");
+        setOutputStatus("idle");
         return;
       }
-
-      const controller = new AbortController();
-      requestControllerRef.current = controller;
-      const result = await executeCode(
-        { language: submittedLanguage, code: submittedCode },
-        { signal: controller.signal },
-      );
-
-      if (requestId !== requestIdRef.current) return;
-
-      if (result.success) {
-        setRunState({
-          status: "success",
-          output: result.output,
-          error: "",
-          executionTimeMs: result.executionTimeMs ?? performance.now() - startedAt,
-        });
-      } else {
-        setRunState({
-          status: "error",
-          output: "",
-          error: result.error || "The program could not be executed.",
-          executionTimeMs: result.executionTimeMs,
-        });
-      }
-    } catch (error) {
-      if (requestId !== requestIdRef.current || error?.code === "CANCELLED") return;
-      const message =
-        error instanceof ApiError
-          ? error.message
-          : "Something unexpected happened while running your code. Please try again.";
-      setRunState({
-        status: "error",
-        output: "",
-        error: message,
-        executionTimeMs: null,
-      });
-    } finally {
-      if (requestId === requestIdRef.current) {
-        requestControllerRef.current = null;
-        runLockRef.current = false;
-      }
-    }
-  }, [drafts, language]);
-
-  useEffect(() => {
-    const handleShortcut = (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        void runCode();
-      }
-    };
-    window.addEventListener("keydown", handleShortcut, true);
-    return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [runCode]);
-
-  const updateCode = useCallback(
-    (nextCode) => {
-      writeStorage(STORAGE_KEYS.code(language), nextCode);
-      setDrafts((current) => ({ ...current, [language]: nextCode }));
-    },
-    [language],
-  );
-
-  const changeLanguage = useCallback(
-    (nextLanguage) => {
-      if (!isSupportedLanguage(nextLanguage) || nextLanguage === language) return;
-      setLanguage(nextLanguage);
-      setRunState(EMPTY_RUN_STATE);
-    },
-    [language],
-  );
-
-  const clearAll = useCallback(() => {
-    cancelActiveRun();
-    writeStorage(STORAGE_KEYS.code(language), "");
-    setDrafts((current) => ({ ...current, [language]: "" }));
-    setRunState(EMPTY_RUN_STATE);
-    if (language === "html") setPreviewDocument("");
-    showToast("Editor and output cleared");
-  }, [cancelActiveRun, language, showToast]);
-
-  const resetCode = useCallback(() => {
-    cancelActiveRun();
-    writeStorage(STORAGE_KEYS.code(language), selectedLanguage.starter);
-    setDrafts((current) => ({ ...current, [language]: selectedLanguage.starter }));
-    setRunState(EMPTY_RUN_STATE);
-    if (language === "html") setPreviewDocument("");
-    showToast(`${selectedLanguage.label} starter restored`);
-  }, [cancelActiveRun, language, selectedLanguage, showToast]);
-
-  const copyCode = useCallback(async () => {
-    try {
-      const copied = await copyText(code);
-      showToast(copied ? "Code copied to clipboard" : "There is no code to copy", copied ? "success" : "info");
-    } catch {
-      showToast("Clipboard access was blocked by the browser", "info");
-    }
-  }, [code, showToast]);
-
-  const copyOutput = useCallback(
-    async (value) => {
-      try {
-        const copied = await copyText(value);
-        showToast(copied ? "Output copied to clipboard" : "There is no output to copy", copied ? "success" : "info");
-      } catch {
-        showToast("Clipboard access was blocked by the browser", "info");
-      }
-    },
-    [showToast],
-  );
-
-  const downloadCode = useCallback(() => {
-    if (!code) {
-      showToast("There is no code to download", "info");
+      setPreviewDocument(preview);
+      setPreviewAllowsScripts(previewFiles.some((projectFile) => /\.(js|jsx)$/i.test(projectFile.filename)));
+      setOutput(`Language: ${LANGUAGES[file.language].label}\nStatus: Preview refreshed\n\nSTDOUT\nRendered in the sandboxed preview.\n\nSTDERR\n<empty>`);
+      setOutputStatus("success");
       return;
     }
-    downloadText(code, `codex-main.${selectedLanguage.extension}`);
-    showToast(`Downloaded codex-main.${selectedLanguage.extension}`);
-  }, [code, selectedLanguage.extension, showToast]);
+    setPreviewDocument("");
+    setPreviewAllowsScripts(false);
+    try {
+      const result = await executeCode({
+        language: file.language,
+        code,
+        stdin,
+        workspaceId: file.language === "sql" ? sqlWorkspaceId(project.id) : "default",
+      });
+      setSqlResult(file.language === "sql" && result.success ? result : null);
+      setOutput(file.language === "sql" && result.success ? "" : formatRunResult(result, file.language));
+      setOutputStatus(result.success ? "success" : "error");
+    } catch (error) {
+      setOutput(`Language: ${LANGUAGES[file.language]?.label || file.language}\nStatus: Unavailable\n\nSTDOUT\n<empty>\n\nSTDERR\n${error.message}`);
+      setOutputStatus("error");
+      if (file.language === "java" || file.language === "c") void refreshRuntimeStatus();
+    }
+  };
 
-  const editor = useMemo(
-    () => (
-      <CodeEditor
-        code={code}
-        executionTimeMs={runState.executionTimeMs}
-        extension={selectedLanguage.extension}
-        isFullscreen={isFullscreen}
-        language={selectedLanguage.monacoLanguage}
-        languageLabel={selectedLanguage.label}
-        onChange={updateCode}
-        onCopy={copyCode}
-        onDownload={downloadCode}
-        onFullscreenToggle={() => setIsFullscreen((current) => !current)}
-        onReset={resetCode}
-        status={runState.status}
-        theme={theme}
-      />
-    ),
-    [
-      code,
-      copyCode,
-      downloadCode,
-      isFullscreen,
-      resetCode,
-      runState.executionTimeMs,
-      runState.status,
-      selectedLanguage,
-      theme,
-      updateCode,
-    ],
-  );
+  const resetSql = async () => {
+    if (!project || file?.language !== "sql") return;
+    if (!window.confirm("Reset this SQL playground? All playground tables and rows for this project will be deleted.")) return;
+    setOutputStatus("running");
+    setSqlResult(null);
+    setOutput("Resetting SQL playground…");
+    try {
+      const result = await resetSqlPlayground(sqlWorkspaceId(project.id));
+      setOutput(result.message);
+      setOutputStatus("success");
+    } catch (error) {
+      setOutput(`SQL reset failed:\n${error.message}`);
+      setOutputStatus("error");
+    }
+  };
 
-  const results = (
-    <div className={`results-stack ${language === "html" ? "results-stack-with-preview" : ""}`}>
-      {language === "html" ? <PreviewPanel document={previewDocument} /> : null}
-      <OutputConsole
-        onClear={() => setRunState(EMPTY_RUN_STATE)}
-        onCopy={copyOutput}
-        runState={runState}
-      />
-    </div>
-  );
+  const changeLanguage = (nextLanguage) => {
+    const config = LANGUAGES[nextLanguage];
+    if (!file || !config || nextLanguage === file.language) return;
+    setFile({
+      ...file,
+      language: nextLanguage,
+      filename: filenameForLanguage(file.filename, nextLanguage),
+    });
+    setCode(config.starter);
+    setOutput("");
+    setOutputStatus("idle");
+    setSqlResult(null);
+    setPreviewDocument("");
+  };
 
   return (
     <div className="app-shell">
-      <Header
-        isRunning={isRunning}
-        language={language}
-        onClear={clearAll}
-        onLanguageChange={changeLanguage}
-        onRun={() => void runCode()}
-        onThemeToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-        theme={theme}
-      />
-
+      <header className="app-header">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="brand-mark">⌘</div>
+          <div className="min-w-0">
+            <b className="text-lg text-[var(--text-strong)]">CodeX</b>
+            <span className="ml-2 text-xs text-[var(--text-muted)]">Online coding workspace</span>
+          </div>
+        </div>
+        <div className="header-actions">
+          <button className="primary-button" onClick={() => void create()} type="button">＋ New project</button>
+          <button aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} className="icon-button h-10 w-10" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} type="button">{theme === "dark" ? "☼" : "☾"}</button>
+          <button className="header-button" onClick={() => void handleLogout()} type="button">Log out</button>
+        </div>
+      </header>
       <main className="app-main">
-        <Workspace editor={editor} results={results} />
+        {!project ? (
+          <section className="dashboard mx-auto max-w-6xl space-y-6">
+            <div className="dashboard-heading flex items-end justify-between">
+              <div>
+                <p className="text-sm text-[var(--brand)]">Workspace</p>
+                <h1 className="text-3xl font-bold text-[var(--text-strong)]">Good to see you, {user.username}.</h1>
+                <p className="text-[var(--text-muted)]">Pick up where you left off.</p>
+              </div>
+              <button className="primary-button" onClick={() => void create()} type="button">Create project</button>
+            </div>
+            <input className="form-input search-input w-full" placeholder="Search projects…" onChange={(event) => setProjects((current) => current.filter((item) => item.name.toLowerCase().includes(event.target.value.toLowerCase())))} />
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {projects.map((item) => (
+                <article className="panel project-card p-5" key={item.id}>
+                  <div className="flex justify-between">
+                    <span className="language-badge">{item.primary_language}</span>
+                    <button aria-label={item.is_favorite ? "Remove from favorites" : "Add to favorites"} className="favorite-button" onClick={() => updateProject(item.id, { is_favorite: !item.is_favorite }).then(() => listProjects().then(setProjects))} type="button">{item.is_favorite ? "★" : "☆"}</button>
+                  </div>
+                  <h2 className="mt-5 font-semibold text-[var(--text-strong)]">{item.name}</h2>
+                  <p className="mt-1 text-sm text-[var(--text-muted)]">{item.files?.length || 0} files · {new Date(item.updated_at).toLocaleDateString()}</p>
+                  <div className="mt-5 flex gap-2">
+                    <button className="header-button" onClick={() => void open(item)} type="button">Open</button>
+                    <button className="danger-button" onClick={() => deleteProject(item.id).then(() => listProjects().then(setProjects))} type="button">Delete</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="project-workspace">
+            <aside className="panel file-explorer p-3">
+              <div className="mb-3 flex justify-between"><b className="text-[var(--text-strong)]">{project.name}</b><button className="text-button" onClick={() => setProject(null)} type="button">Back</button></div>
+              {project.files.map((projectFile) => (
+                <button className={`file-row ${file?.id === projectFile.id ? "file-row-active" : ""}`} key={projectFile.id} onClick={() => { setFile({ ...projectFile, language: languageForFilename(projectFile.filename, projectFile.language) }); setCode(projectFile.content); setOutput(""); setOutputStatus("idle"); setSqlResult(null); setPreviewDocument(""); }} type="button">{projectFile.filename}</button>
+              ))}
+              <button className="text-link mt-3" onClick={async () => { const createdFile = await createFile(project.id, { filename: `file-${project.files.length + 1}.py`, language: "python", content: LANGUAGES.python.starter }); const fullProject = await getProject(project.id); setProject(fullProject); setFile(createdFile); setCode(createdFile.content); setOutput(""); setOutputStatus("idle"); setPreviewDocument(""); }} type="button">＋ New file</button>
+            </aside>
+            <section className="panel editor-panel">
+              <div className="panel-header editor-panel-header">
+                <b className="editor-file-name text-[var(--text-strong)]">{file?.filename || "No file"}</b>
+                <div className="editor-actions flex gap-2">
+                  <select aria-label="Programming language" className="language-select" onChange={(event) => changeLanguage(event.target.value)} onFocus={() => void refreshRuntimeStatus()} value={file?.language || "python"}>
+                    {LANGUAGE_OPTIONS.map((language) => <option key={language.id} value={language.id}>{languageOptionLabel(language, runtimeStatuses)}</option>)}
+                  </select>
+                  <button className="run-button" onClick={() => void run()} type="button">▶ Run</button>
+                  <button className="header-button" onClick={() => void save()} type="button">{saving ? "Saving…" : "Save"}</button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1"><Editor height="100%" language={LANGUAGES[file?.language]?.monacoLanguage || "plaintext"} onChange={(value) => setCode(value ?? "")} options={{ automaticLayout: true, lineHeight: 22, minimap: { enabled: false }, padding: { top: 10, bottom: 10 }, scrollBeyondLastLine: false, fontSize: 14 }} path={`${project.id}/${file?.filename || "untitled"}`} theme={theme === "dark" ? "codex-dark" : "codex-light"} value={code} /></div>
+              <div className={`save-status ${saving ? "save-status-pending" : "save-status-saved"}`}>{saving ? "Saving…" : "Saved to SQL"}</div>
+            </section>
+            <div className={`results-stack ${(file?.language === "html" || file?.language === "css") ? "results-stack-with-preview" : ""}`}>
+              {(file?.language === "html" || file?.language === "css") && <PreviewPanel allowScripts={previewAllowsScripts} document={previewDocument} />}
+              <section className="panel output-panel">
+                <div className="panel-header">
+                  <b className="text-[var(--text-strong)]">{file?.language === "sql" ? "SQL results" : "Input & terminal output"}</b>
+                  <div className="flex items-center gap-2">
+                    <span className={`output-status output-status-${outputStatus}`}>
+                      <span className={`status-dot status-${outputStatus}`} aria-hidden="true" />
+                      {OUTPUT_STATUS_LABELS[outputStatus]}
+                    </span>
+                    {file?.language === "sql" && <button className="text-button" disabled={outputStatus === "running"} onClick={() => void resetSql()} type="button">Reset DB</button>}
+                    <button className="text-button" onClick={() => { setOutput(""); setOutputStatus("idle"); setSqlResult(null); }} type="button">Clear</button>
+                  </div>
+                </div>
+                {file?.language !== "sql" && <label className="border-b border-[var(--border)] p-3 text-xs font-semibold text-[var(--text-muted)]">
+                  STDIN
+                  <textarea className="stdin-input mt-2 block h-16 w-full resize-y font-mono text-xs" onChange={(event) => setStdin(event.target.value)} placeholder="Optional program input" value={stdin} />
+                </label>}
+                {file?.language === "sql" && sqlResult
+                  ? <SQLResultTable result={sqlResult} />
+                  : <pre className={`terminal-output terminal-output-${outputStatus}`}>{output || "Run your code to see output here."}</pre>}
+              </section>
+            </div>
+          </section>
+        )}
       </main>
-
-      <Toast message={toast?.message} type={toast?.type} />
     </div>
   );
 }
