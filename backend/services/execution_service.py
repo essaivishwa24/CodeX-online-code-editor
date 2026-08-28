@@ -237,33 +237,36 @@ class JavaRunner(LanguageRunner):
             )
 
     def resolve_tools(self) -> tuple[str | None, str | None]:
-        """Resolve java and javac dynamically using Windows-friendly precedence."""
+        """Resolve both JDK tools across Linux Docker and local environments."""
 
         java_home = os.getenv("JAVA_HOME", "").strip().strip('"')
-        executable_suffix = ".exe" if os.name == "nt" else ""
         java_home_bin = Path(java_home).expanduser() / "bin" if java_home else None
 
-        if self.runtime is not None:
-            java = _resolve_tool_candidate(self.runtime)
-        else:
-            java = (
-                _resolve_tool_candidate(os.getenv("JAVA_EXECUTABLE"))
-                or _resolve_tool_candidate(
-                    java_home_bin / f"java{executable_suffix}" if java_home_bin else None
-                )
-                or _resolve_tool_candidate("java")
-            )
+        def resolve_jdk_tool(
+            tool_name: str,
+            configured: str | None,
+            environment_name: str,
+        ) -> str | None:
+            if configured is not None:
+                return _resolve_tool_candidate(configured)
 
-        if self.compiler is not None:
-            javac = _resolve_tool_candidate(self.compiler)
-        else:
-            javac = (
-                _resolve_tool_candidate(os.getenv("JAVAC_EXECUTABLE"))
-                or _resolve_tool_candidate(
-                    java_home_bin / f"javac{executable_suffix}" if java_home_bin else None
-                )
-                or _resolve_tool_candidate("javac")
-            )
+            resolved = _resolve_tool_candidate(os.getenv(environment_name))
+            if resolved:
+                return resolved
+            if java_home_bin:
+                java_home_tool = java_home_bin / tool_name
+                resolved = _resolve_tool_candidate(java_home_tool)
+                if resolved:
+                    return resolved
+                if os.name == "nt":
+                    resolved = _resolve_tool_candidate(java_home_tool.with_suffix(".exe"))
+                    if resolved:
+                        return resolved
+            located = shutil.which(tool_name)
+            return str(Path(located).resolve()) if located else None
+
+        java = resolve_jdk_tool("java", self.runtime, "JAVA_EXECUTABLE")
+        javac = resolve_jdk_tool("javac", self.compiler, "JAVAC_EXECUTABLE")
         return java, javac
 
     def plan(self, work_dir: Path) -> RunnerPlan:

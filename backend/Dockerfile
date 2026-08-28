@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
+RUN java -version && javac -version && which java && which javac
+
 WORKDIR /app
 
 COPY requirements.txt /tmp/requirements.txt
