@@ -36,7 +36,7 @@ export const STORAGE_KEYS = {
   theme: "codex:theme",
   split: "codex:editor-split",
   code: (language) => `codex:code:${language}`,
-  sqlWorkspace: (projectId) => `codex:sql-workspace:${projectId}`,
+  sqlWorkspace: (projectId, fileId) => `codex:sql-workspace:${projectId}:${fileId}`,
 };
 
 export function isSupportedLanguage(language) {

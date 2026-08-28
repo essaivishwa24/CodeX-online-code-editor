@@ -73,6 +73,8 @@ class RunnerPlan:
     run_command: list[str]
     compile_command: list[str] | None = None
     runtime_path_entries: tuple[str, ...] = ()
+    compile_timeout_seconds: float | None = None
+    run_timeout_seconds: float | None = None
 
 
 class RuntimeUnavailableError(RuntimeError):
@@ -88,7 +90,9 @@ class _OutputLimitExceeded(Exception):
 
 
 class _ExecutionTimedOut(Exception):
-    pass
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+        super().__init__(timeout_seconds)
 
 
 def _resolve_tool_candidate(command: str | os.PathLike[str] | None) -> str | None:
@@ -207,7 +211,12 @@ class TypeScriptRunner(LanguageRunner):
                 "--outDir", str(work_dir),
                 str(source),
             ]
-        return RunnerPlan(source.name, [node, "--no-addons", "--no-warnings", str(output)], compile_command)
+        return RunnerPlan(
+            source.name,
+            [node, "--no-addons", "--no-warnings", str(output)],
+            compile_command,
+            compile_timeout_seconds=10.0,
+        )
 
 
 class JavaRunner(LanguageRunner):
@@ -287,6 +296,8 @@ class JavaRunner(LanguageRunner):
             source.name,
             [java, "-cp", str(work_dir), "Main"],
             [javac, "-encoding", "UTF-8", str(source)],
+            compile_timeout_seconds=15.0,
+            run_timeout_seconds=10.0,
         )
 
 
@@ -323,6 +334,7 @@ class CRunner(LanguageRunner):
             [str(output)],
             [compiler, str(source), "-o", str(output)],
             (str(Path(compiler).parent),),
+            compile_timeout_seconds=10.0,
         )
 
 
@@ -359,6 +371,7 @@ class CppRunner(LanguageRunner):
             [str(output)],
             [compiler, str(source), "-o", str(output)],
             (str(Path(compiler).parent),),
+            compile_timeout_seconds=10.0,
         )
 
 
@@ -520,6 +533,7 @@ class ExecutionService:
                         work_dir,
                         self._build_sanitized_environment(work_dir, plan.compile_command),
                         "",
+                        plan.compile_timeout_seconds or self.timeout_seconds,
                     )
                     if compile_code != 0:
                         stderr = self._decode_and_clean_output(
@@ -539,17 +553,18 @@ class ExecutionService:
                         plan.runtime_path_entries,
                     ),
                     stdin,
+                    plan.run_timeout_seconds or self.timeout_seconds,
                 )
             except (FileNotFoundError, PermissionError) as exc:
                 raise RuntimeUnavailableError(
                     f"{language.value} execution tool could not be started."
                 ) from exc
-            except _ExecutionTimedOut:
+            except _ExecutionTimedOut as exc:
                 return ExecutionResult(
                     False,
                     "timeout",
                     "",
-                    f"Execution timed out after {self.timeout_seconds:g} seconds.",
+                    f"Execution timed out after {exc.timeout_seconds:g} seconds.",
                     None,
                     time.perf_counter() - started_at,
                 )
@@ -584,6 +599,7 @@ class ExecutionService:
         work_dir: Path,
         environment: dict[str, str],
         stdin: str,
+        timeout_seconds: float,
     ) -> tuple[int, bytes, bytes]:
         worker = asyncio.create_task(
             asyncio.to_thread(
@@ -592,6 +608,7 @@ class ExecutionService:
                 work_dir,
                 environment,
                 stdin,
+                timeout_seconds,
             )
         )
         try:
@@ -609,6 +626,7 @@ class ExecutionService:
         work_dir: Path,
         environment: dict[str, str],
         stdin: str,
+        timeout_seconds: float,
     ) -> tuple[int, bytes, bytes]:
         process_options: dict[str, object] = {}
         if os.name == "nt":
@@ -620,7 +638,7 @@ class ExecutionService:
             cwd=str(work_dir),
             env=environment,
             shell=False,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
@@ -629,7 +647,7 @@ class ExecutionService:
         if process.stdout is None or process.stderr is None:
             self._terminate_process_tree(process)
             raise RuntimeError("Subprocess output pipes were not created.")
-        if process.stdin is not None:
+        if process.stdin is not None and stdin:
             try:
                 process.stdin.write(stdin.encode("utf-8"))
                 process.stdin.close()
@@ -672,12 +690,12 @@ class ExecutionService:
         stdout = bytearray()
         stderr = bytearray()
         finished_streams = 0
-        deadline = time.monotonic() + self.timeout_seconds
+        deadline = time.monotonic() + timeout_seconds
         try:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise _ExecutionTimedOut
+                    raise _ExecutionTimedOut(timeout_seconds)
                 try:
                     stream_name, chunk = chunks.get(timeout=min(0.05, remaining))
                 except Empty:

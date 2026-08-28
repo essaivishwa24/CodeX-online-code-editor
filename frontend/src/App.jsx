@@ -22,7 +22,7 @@ import {
   setToken,
   updateProject,
 } from "./services/api";
-import { createProjectPreview } from "./utils/browser";
+import { copyText, createProjectPreview } from "./utils/browser";
 
 const OUTPUT_STATUS_LABELS = {
   idle: "Ready",
@@ -31,9 +31,9 @@ const OUTPUT_STATUS_LABELS = {
   error: "Error",
 };
 
-function sqlWorkspaceId(projectId) {
+function sqlWorkspaceId(projectId, fileId) {
   if (!projectId) return "default";
-  const storageKey = STORAGE_KEYS.sqlWorkspace(projectId);
+  const storageKey = STORAGE_KEYS.sqlWorkspace(projectId, fileId);
   let workspaceId = localStorage.getItem(storageKey);
   if (!workspaceId) {
     workspaceId = globalThis.crypto?.randomUUID?.()
@@ -45,12 +45,29 @@ function sqlWorkspaceId(projectId) {
 
 function formatRunResult(result, language) {
   const label = LANGUAGES[language]?.label || language;
-  const status = result.status === "compilation_error" ? "Compilation Error"
-    : result.status === "runtime_error" ? "Runtime Error"
-      : result.status === "timeout" ? "Timed Out"
-        : result.success ? "Success" : "Error";
-  const elapsed = result.executionTimeMs == null ? "Not available" : `${(result.executionTimeMs / 1000).toFixed(3)}s`;
-  return `Language: ${label}\nStatus: ${status}\nExecution Time: ${elapsed}\nExit Code: ${result.exitCode ?? "Not available"}\nMemory: ${result.memoryUsage ?? "Not available"}\n\nSTDOUT\n${result.stdout || "<empty>"}\n\nSTDERR\n${result.stderr || "<empty>"}`;
+  const status = result.status === "compilation_error" ? "Compilation failed"
+    : result.status === "runtime_error" ? "Runtime error"
+      : result.status === "timeout" ? "Time limit exceeded"
+        : result.success ? "Run completed" : "Error";
+  const icon = result.success ? "✓" : result.status === "timeout" ? "◷" : "✕";
+  const elapsed = result.executionTimeMs == null ? "—" : `${(result.executionTimeMs / 1000).toFixed(2)}s`;
+  const contentSections = [];
+  if (result.status === "timeout") {
+    contentSections.push("Your program exceeded the maximum execution time.");
+  } else {
+    if (result.stdout) contentSections.push(`Output\n${result.stdout}`);
+    if (result.stderr) contentSections.push(`Errors\n${result.stderr}`);
+    if (!contentSections.length) contentSections.push(result.success
+      ? "Program finished successfully with no output."
+      : "The execution failed.");
+  }
+  const details = [
+    `Language: ${label}`,
+    `Status: ${status}`,
+    `Execution time: ${elapsed}`,
+    ...(result.exitCode == null ? [] : [`Exit code: ${result.exitCode}`]),
+  ];
+  return `${icon} ${status}    ${elapsed}\n\n${contentSections.join("\n\n")}\n\nExecution details\n${details.join("\n")}`;
 }
 
 function friendlyAuthError(error) {
@@ -183,6 +200,7 @@ export default function App() {
   const [stdin, setStdin] = useState("");
   const [previewDocument, setPreviewDocument] = useState("");
   const [previewAllowsScripts, setPreviewAllowsScripts] = useState(false);
+  const [copyLabel, setCopyLabel] = useState("Copy output");
   const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState(localStorage.getItem("codex:theme") || "dark");
   const [authChecked, setAuthChecked] = useState(false);
@@ -359,7 +377,7 @@ export default function App() {
       }
       setPreviewDocument(preview);
       setPreviewAllowsScripts(previewFiles.some((projectFile) => /\.(js|jsx)$/i.test(projectFile.filename)));
-      setOutput(`Language: ${LANGUAGES[file.language].label}\nStatus: Preview refreshed\n\nSTDOUT\nRendered in the sandboxed preview.\n\nSTDERR\n<empty>`);
+      setOutput(`✓ Preview refreshed    —\n\nRendered in the sandboxed preview.`);
       setOutputStatus("success");
       return;
     }
@@ -370,13 +388,13 @@ export default function App() {
         language: file.language,
         code,
         stdin,
-        workspaceId: file.language === "sql" ? sqlWorkspaceId(project.id) : "default",
+        workspaceId: file.language === "sql" ? sqlWorkspaceId(project.id, file.id) : "default",
       });
       setSqlResult(file.language === "sql" && result.success ? result : null);
       setOutput(file.language === "sql" && result.success ? "" : formatRunResult(result, file.language));
       setOutputStatus(result.success ? "success" : "error");
     } catch (error) {
-      setOutput(`Language: ${LANGUAGES[file.language]?.label || file.language}\nStatus: Unavailable\n\nSTDOUT\n<empty>\n\nSTDERR\n${error.message}`);
+      setOutput(formatRunResult({ success: false, status: "unavailable", stderr: error.message }, file.language));
       setOutputStatus("error");
       if (file.language === "java" || file.language === "c") void refreshRuntimeStatus();
     }
@@ -389,12 +407,53 @@ export default function App() {
     setSqlResult(null);
     setOutput("Resetting SQL playground…");
     try {
-      const result = await resetSqlPlayground(sqlWorkspaceId(project.id));
+      const result = await resetSqlPlayground(sqlWorkspaceId(project.id, file.id));
       setOutput(result.message);
       setOutputStatus("success");
     } catch (error) {
       setOutput(`SQL reset failed:\n${error.message}`);
       setOutputStatus("error");
+    }
+  };
+
+  const createNewFile = async () => {
+    if (!project || !file) return;
+    const requestedName = window.prompt("Filename", filenameForLanguage("", file.language));
+    if (requestedName === null) return;
+    const filename = requestedName.trim();
+    if (!filename || filename === "." || filename === ".." || /[\\/]/.test(filename) || !/^[A-Za-z0-9._ -]+$/.test(filename)) {
+      setOutput("Invalid filename. Use letters, numbers, dots, underscores, spaces, and hyphens only.");
+      setOutputStatus("error");
+      return;
+    }
+    const createdFile = await createFile(project.id, {
+      filename,
+      language: file.language,
+      content: LANGUAGES[file.language]?.starter || "",
+    });
+    const fullProject = await getProject(project.id);
+    setProject(fullProject);
+    setFile(createdFile);
+    setCode(createdFile.content);
+    setOutput("");
+    setOutputStatus("idle");
+    setSqlResult(null);
+    setPreviewDocument("");
+  };
+
+  const clearOutput = () => {
+    setOutput("");
+    setOutputStatus("idle");
+    setSqlResult(null);
+    setCopyLabel("Copy output");
+  };
+
+  const copyOutput = async () => {
+    if (!output) return;
+    const copied = await copyText(output);
+    if (copied) {
+      setCopyLabel("Copied");
+      window.setTimeout(() => setCopyLabel("Copy output"), 1400);
     }
   };
 
@@ -465,7 +524,7 @@ export default function App() {
               {project.files.map((projectFile) => (
                 <button className={`file-row ${file?.id === projectFile.id ? "file-row-active" : ""}`} key={projectFile.id} onClick={() => { setFile({ ...projectFile, language: languageForFilename(projectFile.filename, projectFile.language) }); setCode(projectFile.content); setOutput(""); setOutputStatus("idle"); setSqlResult(null); setPreviewDocument(""); }} type="button">{projectFile.filename}</button>
               ))}
-              <button className="text-link mt-3" onClick={async () => { const createdFile = await createFile(project.id, { filename: `file-${project.files.length + 1}.py`, language: "python", content: LANGUAGES.python.starter }); const fullProject = await getProject(project.id); setProject(fullProject); setFile(createdFile); setCode(createdFile.content); setOutput(""); setOutputStatus("idle"); setPreviewDocument(""); }} type="button">＋ New file</button>
+              <button className="text-link mt-3" onClick={() => void createNewFile()} type="button">＋ New file</button>
             </aside>
             <section className="panel editor-panel">
               <div className="panel-header editor-panel-header">
@@ -485,14 +544,15 @@ export default function App() {
               {(file?.language === "html" || file?.language === "css") && <PreviewPanel allowScripts={previewAllowsScripts} document={previewDocument} />}
               <section className="panel output-panel">
                 <div className="panel-header">
-                  <b className="text-[var(--text-strong)]">{file?.language === "sql" ? "SQL results" : "Input & terminal output"}</b>
+                  <b className="text-[var(--text-strong)]">{file?.language === "sql" ? "SQL results" : "Output"}</b>
                   <div className="flex items-center gap-2">
                     <span className={`output-status output-status-${outputStatus}`}>
                       <span className={`status-dot status-${outputStatus}`} aria-hidden="true" />
                       {OUTPUT_STATUS_LABELS[outputStatus]}
                     </span>
                     {file?.language === "sql" && <button className="text-button" disabled={outputStatus === "running"} onClick={() => void resetSql()} type="button">Reset DB</button>}
-                    <button className="text-button" onClick={() => { setOutput(""); setOutputStatus("idle"); setSqlResult(null); }} type="button">Clear</button>
+                    <button className="text-button" disabled={!output} onClick={() => void copyOutput()} type="button">{copyLabel}</button>
+                    <button className="text-button" disabled={outputStatus === "running"} onClick={clearOutput} type="button">Clear</button>
                   </div>
                 </div>
                 {file?.language !== "sql" && <label className="border-b border-[var(--border)] p-3 text-xs font-semibold text-[var(--text-muted)]">

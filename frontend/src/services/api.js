@@ -81,7 +81,9 @@ export const resetSqlPlayground = (workspaceId) => request("/api/sql/reset", {
 });
 
 const parsedTimeout = Number(import.meta.env?.VITE_API_TIMEOUT_MS);
-const REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 20_000;
+const REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0
+  ? Math.max(parsedTimeout, 30_000)
+  : 30_000;
 const CONNECTION_ERROR_MESSAGE = "Unable to contact the CodeX API.";
 
 export class ApiError extends Error {
