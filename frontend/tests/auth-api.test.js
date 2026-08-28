@@ -57,6 +57,6 @@ test("auth network failures have a stable user-facing error", async (context) =>
 
   await assert.rejects(
     getCurrentUser(),
-    (error) => error.code === "NETWORK_ERROR" && error.message === "Unable to connect to the CodeX server.",
+    (error) => error.code === "NETWORK_ERROR" && error.message === "Unable to contact the CodeX API.",
   );
 });

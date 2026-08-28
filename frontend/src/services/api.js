@@ -1,5 +1,15 @@
-const configuredBaseUrl = (import.meta.env?.VITE_API_BASE_URL || "").trim();
+// Keep this value as the backend origin only. Every endpoint below owns its
+// complete `/api/...` path so production cannot accidentally create `/api/api`.
+const configuredBaseUrl = (import.meta.env?.VITE_API_URL || "").trim();
 export const API_BASE_URL = configuredBaseUrl.replace(/\/$/, "");
+
+export function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+if (typeof console !== "undefined") {
+  console.info(`CodeX API: ${API_BASE_URL || "(same-origin via Vite proxy)"}`);
+}
 const TOKEN_KEY = "codex_access_token";
 const LEGACY_TOKEN_KEYS = ["codex:token"];
 
@@ -27,7 +37,8 @@ export function setToken(token) {
 async function request(path, options = {}) {
   const token = getToken();
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const url = apiUrl(path);
+    const response = await fetch(url, {
       ...options,
       headers: {
         Accept: "application/json",
@@ -38,19 +49,18 @@ async function request(path, options = {}) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
+      console.error(`CodeX API request failed (${response.status}): ${url}`);
       throw new ApiError(
         readableDetail(body.detail || body.error),
         response.status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR",
         response.status,
+        url,
       );
     }
     return body;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError(
-      "Unable to connect to the CodeX server.",
-      "NETWORK_ERROR",
-    );
+    throw new ApiError("Unable to contact the CodeX API.", "NETWORK_ERROR");
   }
 }
 export const register = (data) => request("/api/auth/register", { method: "POST", body: JSON.stringify(data) });
@@ -72,15 +82,15 @@ export const resetSqlPlayground = (workspaceId) => request("/api/sql/reset", {
 
 const parsedTimeout = Number(import.meta.env?.VITE_API_TIMEOUT_MS);
 const REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 20_000;
-const CONNECTION_ERROR_MESSAGE =
-  "Unable to connect to the CodeX execution server. Make sure the backend is running.";
+const CONNECTION_ERROR_MESSAGE = "Unable to contact the CodeX API.";
 
 export class ApiError extends Error {
-  constructor(message, code = "API_ERROR", status = null) {
+  constructor(message, code = "API_ERROR", status = null, url = null) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.url = url;
   }
 }
 
@@ -147,7 +157,8 @@ export async function executeCode({ language, code, stdin = "", workspaceId = "d
   signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/run`, {
+    const url = apiUrl("/api/run");
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -178,8 +189,9 @@ export async function executeCode({ language, code, stdin = "", workspaceId = "d
     }
 
     if (!response.ok) {
+      console.error(`CodeX API request failed (${response.status}): ${url}`);
       const message = readableDetail(payload?.detail || payload?.error);
-      throw new ApiError(message, "HTTP_ERROR", response.status);
+      throw new ApiError(message, "HTTP_ERROR", response.status, url);
     }
 
     return normalizeResult(payload);

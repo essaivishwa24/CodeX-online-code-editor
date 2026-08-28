@@ -14,7 +14,7 @@ Open `http://localhost:5173`. The Vite development and preview servers proxy `/a
 The default API base URL is empty, so Run sends a relative `POST /api/run` request through the Vite proxy. To point the frontend at a separately hosted backend, copy `.env.example` to `.env` and set:
 
 ```text
-VITE_API_BASE_URL=http://127.0.0.1:8010
+VITE_API_URL=http://127.0.0.1:8010
 ```
 
 The execution request is `POST /api/run` with this JSON body:
@@ -34,7 +34,7 @@ npm run build
 npm run preview
 ```
 
-The production assets are written to `dist/`. Configure `VITE_API_BASE_URL` at build time when the API is hosted on a different origin.
+The production assets are written to `dist/`. Configure `VITE_API_URL` at build time when the API is hosted on a different origin. The variable must contain only the backend origin, for example `https://codex-backend-ksz8.onrender.com`; endpoint paths append `/api/...` themselves.
 
 ## Browser-side safety
 

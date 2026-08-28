@@ -57,7 +57,7 @@ function friendlyAuthError(error) {
   if (error instanceof ApiError) {
     if (error.status === 401) return "Invalid email or password.";
     if (error.status === 403) return "This account is currently disabled.";
-    if (error.code === "NETWORK_ERROR") return "Unable to connect to the CodeX server.";
+    if (error.status === 404 || error.code === "NETWORK_ERROR") return "Unable to contact the CodeX API.";
     if (error.status >= 500) return "Unable to sign in right now. Please try again.";
   }
   return error?.message || "Unable to sign in right now. Please try again.";
@@ -226,7 +226,7 @@ export default function App() {
         setUser(null);
         setAuthMessage("Your session has expired. Please sign in again.");
       } else {
-        setRestoreError("Unable to connect to the CodeX server.");
+        setRestoreError("Unable to contact the CodeX API.");
       }
     } finally {
       setAuthChecked(true);

@@ -82,7 +82,17 @@ async def lifespan(_app: FastAPI):
 
 def create_app():
     init_db(); app=FastAPI(title="CodeX API", version="2.0.0", lifespan=lifespan)
-    origins=[x.strip().rstrip("/") for x in os.environ.get("CODEX_CORS_ORIGINS","http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173").split(",") if x.strip()]
+    required_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "https://code-x-online-code-editor.vercel.app",
+        "https://code-x-online-code-editor-git-main-essai-vishwa.vercel.app",
+        "https://code-x-online-code-editor-e4wpkw653-essai-vishwa.vercel.app",
+    ]
+    configured_origins = [x.strip().rstrip("/") for x in os.environ.get("CODEX_CORS_ORIGINS", "").split(",") if x.strip()]
+    origins = list(dict.fromkeys(required_origins + configured_origins))
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.include_router(health_router,prefix="/api"); app.include_router(code_runner_router,prefix="/api")
     @app.post("/api/auth/register")

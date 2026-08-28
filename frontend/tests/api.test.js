@@ -18,7 +18,7 @@ function jsonResponse(payload, options = {}) {
 }
 
 const CONNECTION_ERROR_MESSAGE =
-  "Unable to connect to the CodeX execution server. Make sure the backend is running.";
+  "Unable to contact the CodeX API.";
 
 test("omitted execution duration stays null", async (context) => {
   context.mock.method(globalThis, "fetch", async () =>
