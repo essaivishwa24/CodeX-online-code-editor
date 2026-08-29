@@ -85,7 +85,7 @@ function formatRunResult(result, language) {
 function friendlyAuthError(error) {
   if (error instanceof ApiError) {
     if (error.status === 401) return "Invalid email or password.";
-    if (error.status === 403) return "This account is currently disabled.";
+    if (error.status === 403) return "Unable to sign in right now. Please try again.";
     if (error.status === 404 || error.code === "NETWORK_ERROR") return "Unable to contact the CodeX API.";
     if (error.status >= 500) return "Unable to sign in right now. Please try again.";
   }
@@ -128,12 +128,13 @@ function Auth({ initialMessage = "", onAuthenticated }) {
           <div className="brand-mark">⌘</div>
           <div className="auth-brand-copy min-w-0">
             <h1 className="text-2xl font-bold text-[var(--text-strong)]">CodeX</h1>
-            <p className="auth-tagline break-words text-sm leading-5 text-[var(--text-muted)]">Your focused online coding workspace</p>
+            <p className="auth-tagline break-words text-sm leading-5 text-[var(--text-muted)]">Online Code Editor</p>
           </div>
         </div>
         <h2 className="text-lg font-semibold text-[var(--text-strong)]">
-          {signup ? "Create your account" : "Welcome back"}
+          {signup ? "Create your CodeX account" : "Sign in to your CodeX account"}
         </h2>
+        <p className="text-sm leading-5 text-[var(--text-muted)]">CodeX — Online Code Editor</p>
         {signup && (
           <input
             autoComplete="username"
@@ -142,6 +143,7 @@ function Auth({ initialMessage = "", onAuthenticated }) {
             maxLength={40}
             minLength={3}
             onChange={(event) => updateField("username", event.target.value)}
+            name="username"
             pattern="[A-Za-z0-9_-]+"
             placeholder="Username"
             required
@@ -153,6 +155,7 @@ function Auth({ initialMessage = "", onAuthenticated }) {
           className="form-input w-full"
           disabled={isSubmitting}
           onChange={(event) => updateField("email", event.target.value)}
+          name="email"
           placeholder="Email"
           required
           type="email"
@@ -164,6 +167,7 @@ function Auth({ initialMessage = "", onAuthenticated }) {
           disabled={isSubmitting}
           minLength={8}
           onChange={(event) => updateField("password", event.target.value)}
+          name="password"
           placeholder="Password (8+ characters)"
           required
           type="password"
@@ -176,12 +180,14 @@ function Auth({ initialMessage = "", onAuthenticated }) {
             disabled={isSubmitting}
             minLength={8}
             onChange={(event) => updateField("confirm_password", event.target.value)}
+            name="confirm_password"
             placeholder="Confirm password"
             required
             type="password"
             value={form.confirm_password}
           />
         )}
+        <p className="text-xs leading-5 text-[var(--text-faint)]">Your CodeX password is used only to authenticate your CodeX account.</p>
         {error && <p className="text-sm text-[var(--error)]" role="alert">{error}</p>}
         <button className="primary-button w-full" disabled={isSubmitting} type="submit">
           {isSubmitting ? (signup ? "Creating account…" : "Signing in…") : (signup ? "Sign up" : "Log in")}

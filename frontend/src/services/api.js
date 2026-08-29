@@ -1,15 +1,15 @@
 // Keep this value as the backend origin only. Every endpoint below owns its
 // complete `/api/...` path so production cannot accidentally create `/api/api`.
-const configuredBaseUrl = (import.meta.env?.VITE_API_URL || "").trim();
-export const API_BASE_URL = configuredBaseUrl.replace(/\/$/, "");
+const PRODUCTION_API_URL = "https://codex-backend-ksz8.onrender.com";
+const configuredBaseUrl = (import.meta.env?.VITE_API_URL || "").trim().replace(/\/$/, "");
+const isProduction = Boolean(import.meta.env?.PROD);
+const configuredProductionUrl = configuredBaseUrl === PRODUCTION_API_URL ? configuredBaseUrl : PRODUCTION_API_URL;
+export const API_BASE_URL = isProduction ? configuredProductionUrl : configuredBaseUrl;
 
 export function apiUrl(path) {
   return `${API_BASE_URL}${path}`;
 }
 
-if (typeof console !== "undefined") {
-  console.info(`CodeX API: ${API_BASE_URL || "(same-origin via Vite proxy)"}`);
-}
 const TOKEN_KEY = "codex_access_token";
 const LEGACY_TOKEN_KEYS = ["codex:token"];
 
@@ -58,7 +58,6 @@ async function request(path, options = {}) {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error(`CodeX API request failed (${response.status}): ${url}`);
       throw new ApiError(
         readableDetail(body.detail || body.error),
         response.status === 401 ? "UNAUTHORIZED" : "HTTP_ERROR",
@@ -200,7 +199,6 @@ export async function executeCode({ language, code, stdin = "", workspaceId = "d
     }
 
     if (!response.ok) {
-      console.error(`CodeX API request failed (${response.status}): ${url}`);
       const message = readableDetail(payload?.detail || payload?.error);
       throw new ApiError(message, "HTTP_ERROR", response.status, url);
     }

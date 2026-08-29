@@ -7,9 +7,10 @@ if not __package__:
     root = str(Path(__file__).resolve().parent.parent)
     if root not in sys.path: sys.path.insert(0, root)
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 if __package__:
@@ -28,22 +29,42 @@ else:
 class Register(BaseModel):
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-    confirm_password: str | None = None
+    password: SecretStr
+    confirm_password: SecretStr | None = None
+    @field_validator("password")
+    @classmethod
+    def password_is_valid(cls, value):
+        raw = value.get_secret_value()
+        if len(raw) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(raw) > 128:
+            raise ValueError("Password must not exceed 128 characters")
+        if len(raw.encode("utf-8")) > 72:
+            raise ValueError("Password must not exceed the bcrypt limit")
+        return value
+
     @field_validator("confirm_password")
     @classmethod
     def match(cls, v, info):
-        if v is not None and info.data.get("password") != v:
+        password = info.data.get("password")
+        if v is not None and password is not None and password.get_secret_value() != v.get_secret_value():
             raise ValueError("Passwords do not match")
         return v
 
-    @field_validator("password")
-    @classmethod
-    def password_fits_bcrypt(cls, value):
-        if len(value.encode("utf-8")) > 72:
-            raise ValueError("Password must not exceed 72 UTF-8 bytes")
-        return value
-class Login(BaseModel): email: EmailStr; password: str
+class Login(BaseModel):
+    email: EmailStr
+    password: SecretStr
+
+class PublicUser(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    role: str
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: PublicUser
 class ProjectIn(BaseModel): name: str = Field(min_length=1, max_length=120); primary_language: str = "python"; description: str = ""; template: str = "basic"
 class FileIn(BaseModel): filename: str = Field(min_length=1, max_length=255); language: str; content: str = ""
 class FileUpdate(BaseModel):
@@ -82,6 +103,20 @@ async def lifespan(_app: FastAPI):
 
 def create_app():
     init_db(); app=FastAPI(title="CodeX API", version="2.0.0", lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(_request, exc):
+        # FastAPI's default validation payload includes the rejected input. Never
+        # return password values, even when a password validation rule fails.
+        errors = []
+        for error in exc.errors():
+            location = error.get("loc", ())
+            safe_error = {key: error[key] for key in ("type", "loc", "msg") if key in error}
+            if not any(part in {"password", "confirm_password"} for part in location):
+                safe_error["input"] = error.get("input")
+            errors.append(safe_error)
+        return JSONResponse(status_code=422, content={"detail": errors})
+
     required_origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -98,23 +133,22 @@ def create_app():
         allow_headers=["*"],
     )
     app.include_router(health_router,prefix="/api"); app.include_router(code_runner_router,prefix="/api")
-    @app.post("/api/auth/register")
+    @app.post("/api/auth/register", response_model=AuthResponse)
     def register(data:Register, db:Session=Depends(get_db)):
         normalized_email = data.email.lower()
         if db.scalar(select(User).where(User.email == normalized_email)):
-            raise HTTPException(409, "Email or username already exists")
+            raise HTTPException(409, "Unable to create account with those details")
         if db.scalar(select(User).where(User.username == data.username)):
-            raise HTTPException(409, "Email or username already exists")
-        user=User(username=data.username,email=normalized_email,password_hash=hash_password(data.password)); db.add(user); db.commit(); db.refresh(user)
+            raise HTTPException(409, "Unable to create account with those details")
+        user=User(username=data.username,email=normalized_email,password_hash=hash_password(data.password.get_secret_value())); db.add(user); db.commit(); db.refresh(user)
         return {"access_token":create_token(user),"token_type":"bearer","user":{"id":user.id,"username":user.username,"email":user.email,"role":user.role}}
-    @app.post("/api/auth/login")
+    @app.post("/api/auth/login", response_model=AuthResponse)
     def login(data:Login, db:Session=Depends(get_db)):
         user=db.scalar(select(User).where(User.email==data.email.lower()))
-        if not user or not verify_password(data.password,user.password_hash): raise HTTPException(401,"Invalid email or password")
-        if not user.is_active:
-            raise HTTPException(403, "This account is currently disabled")
+        if not user or not verify_password(data.password.get_secret_value(),user.password_hash) or not user.is_active:
+            raise HTTPException(401,"Invalid email or password")
         return {"access_token":create_token(user),"token_type":"bearer","user":{"id":user.id,"username":user.username,"email":user.email,"role":user.role}}
-    @app.get("/api/auth/me")
+    @app.get("/api/auth/me", response_model=PublicUser)
     def me(user:User=Depends(current_user)): return {"id":user.id,"username":user.username,"email":user.email,"role":user.role}
     @app.post("/api/auth/logout")
     def logout(user: User = Depends(current_user)): return {"ok":True}

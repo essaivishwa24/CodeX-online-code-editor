@@ -116,9 +116,45 @@ def test_wrong_unknown_disabled_and_unauthorized_access():
         "/api/auth/login",
         json={"email": "codextest@example.com", "password": "Test@12345"},
     )
-    assert disabled.status_code == 403
-    assert disabled.json()["detail"] == "This account is currently disabled"
+    assert disabled.status_code == 401
+    assert disabled.json()["detail"] == "Invalid email or password"
     assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_password_validation_and_responses_never_echo_secrets():
+    client, _ = make_client()
+    secret = "ShortSecret"
+
+    invalid = client.post(
+        "/api/auth/register",
+        json={"username": "secretuser", "email": "secret@example.com", "password": "short"},
+    )
+    assert invalid.status_code == 422
+    assert secret not in invalid.text
+    assert "short" not in invalid.text
+
+    mismatch = client.post(
+        "/api/auth/register",
+        json={
+            "username": "secretuser",
+            "email": "secret@example.com",
+            "password": secret,
+            "confirm_password": "DifferentSecret",
+        },
+    )
+    assert mismatch.status_code == 422
+    assert secret not in mismatch.text
+    assert "DifferentSecret" not in mismatch.text
+
+    registration = client.post(
+        "/api/auth/register",
+        json={"username": "secretuser", "email": "secret@example.com", "password": secret},
+    )
+    assert registration.status_code == 200
+    body = registration.json()
+    assert "password" not in body and "password_hash" not in body
+    assert "password" not in client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"}).text
+    assert "password_hash" not in client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"}).text
 
 
 def test_two_authenticated_clients_keep_identity_and_projects_isolated():
